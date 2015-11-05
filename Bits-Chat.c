@@ -314,7 +314,7 @@ bool comando_who(Cliente emisor, Cliente clientes){
 			snprintf(msg, sizeof(max_text), "%s, ", aux->nome);
 	}
 	snprintf(msg, sizeof(max_text), "\n----------------------------------------------------------------------------\n");
-	recv(emisor->socket, msg, sizeof(msg), 0);
+	send(emisor->socket, msg, sizeof(msg), 0);
 	memset(msg, 0x0, max_text);
 	return true;
 }
