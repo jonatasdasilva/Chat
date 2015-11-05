@@ -226,52 +226,29 @@ bool cadastra_clientes(int socket, char *nome, Cliente *clientes){
 bool comando_send(Cliente clientes, Cliente emisor, char *msg){
 	char send_msg[max_text]; //Conteudo total a ser enviado!
 	Cliente aux; //Auxiliar para envio à todos os clientes!
-	//char *hora = NULL;
-	int envio = 0;
 
-	//(*hora) = imprime_hora();//capturando hora;
 	/*Criando a msg com o nome e a msg a ser enviada!*/
 	snprintf(send_msg, max_text, "%s diz: %s", emisor->nome, msg);
 	/*Loop que envia a msg para todos os clientes.*/
 	for(aux = clientes; (aux) ; aux = aux->dir){
-		//System("clear");
 		if((aux->socket != emisor->socket)){
 			send(aux->socket, send_msg, strlen(send_msg), 0);
-			envio++;
+			return true;
 		}
 	}
-	//if((envio - 1) == max_users){
-		//printf("%s\t%s\tSEND\tExecutado:Sim", hora, emisor->nome);
-		//memset(nome, 0x0, max_text);
-		//memset(msg, 0x0, max_text);
-		//return true;
-	//}
-	//memset(nome, 0x0, max_text);
-	//memset(msg, 0x0, max_text);
-	//printf("%s\t%s\tSENDTO\tExecutado:Nao", hora, emisor->nome);
-
 	return false;
 }
 
 bool comando_send_to(Cliente receptor, Cliente emisor, char *msg){
 	char send_to_msg [max_text];
-	//char *hora =  NULL;
 
 	/*Criando a msg com o nome e a msg a ser enviada!*/
 	snprintf(send_to_msg, max_text, "%s diz: %s", emisor->nome, msg);
-	//(*hora) = imprime_hora();//capturando hora;
 	/*Enviando a msg para o usuário especificado!*/
 	if ((receptor)&&(receptor->conexao)){
-		//System("clear");
 		send(receptor->socket, send_to_msg, strlen(send_to_msg), 0);
-		//printf("%s\t%s\tSENDTO\tExecutado:Sim", hora, emisor->nome);
-		//memset(nome, 0x0, max_text);
-		//memset(msg, 0x0, max_text);
 		return true;
 	}
-	//printf("%s\t%s\tSENDTO\tExecutado:Nao", hora, emisor->nome);
-	//memset(nome, 0x0, max_text);
-	//memset(msg, 0x0, max_text);
 	return false;
 }
 /*Comando que envia a lista de usuários conectados*/
@@ -286,7 +263,7 @@ bool comando_who(Cliente emisor, Cliente clientes){
 			snprintf(msg, sizeof(max_text), "%s, ", aux->nome);
 	}
 	snprintf(msg, sizeof(max_text), "\n\n----------------------------------------------------------------------------\n");
-	recv(emisor->socket, msg, sizeof(msg), 0);
+	send(emisor->socket, msg, sizeof(msg), 0);
 	memset(msg, 0x0, max_text);
 	return true;
 }
@@ -300,19 +277,18 @@ bool comando_help(Cliente emisor, Comandos comand){
 		snprintf(msg_help, max_text, "| %s -- %s |\n", aux->comando, aux->descricao);
 	}
 	snprintf(msg_help, max_text, "-----------------------------------------------------------------------------\n");
-	recv(emisor->socket, msg_help, strlen(msg_help), 0);
-	//memset(msg, 0x0, max_text);
+	send(emisor->socket, msg_help, strlen(msg_help), 0);
 	return true;
 }
 /*Envia mensagem de desconhecimento do comando*/
 void comando_erro(Cliente emisor, char *comando){
 	char erro[max_text];
 
-	snprintf(erro, max_text, "%s, comando não encontrado!\nPro favor use o comando <HELP> para verer a lista de comandos!\n", comando);
-	recv(emisor->socket, erro, strlen(erro), 0);
+	snprintf(erro, max_text, "%s, comando não encontrado!\nPro favor use o comando [HELP] para verer a lista de comandos!\n", comando);
+	send(emisor->socket, erro, strlen(erro), 0);
 }
 
-int main (int argc, char *argv[]){
+int main (int argc, char *argv[]) {
 	Cliente lista_clientes, c, emisor, aux;
 	Comandos comandos;
 	int clientes, servidor, tamanho, t;
@@ -345,7 +321,7 @@ int main (int argc, char *argv[]){
 	if(bind(clientes, (struct sockaddr *)&direc, sizeof(direc)) < 0){
 		perror("bind");
 		close(clientes);
-		return(-1);
+		exit(2);
 	}
 	system("clear");
 	listen(clientes, max_users);
@@ -372,6 +348,10 @@ int main (int argc, char *argv[]){
 		bool r;
 		/*vai setar o descritor para cada nova conexão.*/
         for(t = 0, c = lista_clientes; (c) && t < max_users; t++, c = c->dir){
+        	if((t=select(FD_SETSIZE, &select_acao, NULL, NULL, &select_time)) < 0){
+            	perror("select");
+            	return 3;
+            }
             if (c->socket != -1){
                 if(FD_SET(c->socket, &select_acao)){
 					if((servidor = accept(clientes, (struct sockaddr *)&direc, &tamanho)) < 0){
@@ -443,13 +423,9 @@ int main (int argc, char *argv[]){
 					}
             	}
         	}
-
-        	if((t=select(FD_SETSIZE, &select_acao, NULL, NULL, &select_time)) < 0){
-            	perror("select");
-            	return -1;
-        	}
+        }
 		
-		}
+	}
 		//printf("Mensagem recebida: %s\n", buffer);
 		//aqui envia uma Mensagem
 		//printf("Escreva sua MSG: ");
