@@ -119,18 +119,16 @@ bool imprime_hora(char *tempo){
 	hora = Obtem_hora();
 	minuto = Obtem_minuto();
 
-	if (hora <10){
-		strcat(retorno, "0");
-		strcat(retorno, hora);
+	if(hora <10){
+		if(minuto < 10){
+			sprintf(retorno, "0%d:0%d", hora, minuto);
+		}else
+			sprintf(retorno, "0%d:%d", hora, minuto);	
 	}else{
-		strcat(retorno, hora);
-	}
-	strcat(retorno, ":");
-	if (minuto < 10){
-		strcat(retorno, "0");
-		strcat(retorno, minuto);
-	}else{
-		strcat(retorno, minuto);
+		if(minuto < 10){
+			sprintf(retorno, "%d:0%d", minuto);
+		}else
+			sprintf(retorno, "%d:%d", minuto);
 	}
 	strcpy(tempo, retorno);
 	return true;
