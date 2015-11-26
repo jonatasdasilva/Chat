@@ -1,444 +1,667 @@
-//Includes básicos para programas
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdbool.h>
-//Includes Para funcionamento básico de Sockets
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netdb.h>
-//Includes adicionais para sockets
-#include <sys/signal.h>
+#include <sys/select.h> //Includes para o uso do Select();
 #include <arpa/inet.h>
 #include <sys/types.h>
-#include <unistd.h>
-#include <errno.h>
-#include <time.h>
-//#include <mem.h>
-//Includes para o uso do Select();
-#include <sys/select.h>
 #include <sys/time.h>
+#include <stdbool.h>
+#include <pthread.h> //pra Threads
+#include <signal.h> //Para os Sinais, Ex.: Ctrl+C
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <errno.h>
+#include <netdb.h>
+#include <time.h>
 
-#define SERVER_OCUPADO "Servidor ocupado\n"
-#define max_users 50
-#define max_text 2024
-#define command 3
+#define max_users 100
+#define max_text 2002
 #define nome_user 30
-///////////////////////////////Variáveis globais, para capturar horas//////////////////////////////////
-struct tm *DataAtual; //estrutura para armazenar data e hora.
-time_t Segundos; //Valor dos segundos a serem gardados para a conversão para impressão do <time>
-/////////////////////////////////////////Variáveis globais/////////////////////////////////////////////
-int i = command; //Número de comandos que existirão na lista.
-int  users = max_users; //número máximo de usuários, essa variável pode ser alterada.
-int socket_listen; // Listen para espera na escuta.
-int on; //Garda quantos clientes ainda estão conectados.
-char buffer[max_text]; //Buffer para a troca de Mensagens.
-char *nome, *msg;
-////////////////////////////////Strutura para controle dos clientes////////////////////////////////////
+#define command 7
+
 /*Estrutura para cadastro dos usuário conectados. Usado no controle deles*/
 typedef struct No{
 	char nome[nome_user];
-	bool conexao;
-	int porta;
 	int socket;
 	struct No *dir;
 }No, *Cliente;
 /*Estrutura para impressão dos comandos muito util, na hora do camando help*/
 typedef struct comandos{
-	char comand[7];
+	char comando[7];
 	char descricao[max_text];
 	struct comandos *dir;
 }comandos, *Comandos;
-/////////////////////////////////////////////Funções///////////////////////////////////////////////////
-/*Inicializando lista de clientes*/
-void cria_lista_clientes(Cliente *clientes){
+
+struct tm *tempo_atual; /*Armazena data e hora*/
+time_t segundos; /*Valor em segundos armazenados pra conversão em horas ou minutos*/
+int cm = 3; /*Para ser usado na função que seta os comandos*/
+bool cadastro = false;
+int conectados = 0;
+fd_set select_acao, select_aux;
+int clientes, novo_cliente, c, tamanho, nbytes; //para Sockets
+char buffer[max_text];
+pthread_t thread_cadastro, thread_comando; //Threads
+int fd[2]; //para o pipe
+Cliente passagem = NULL;
+pthread_mutex_t mutex; //mutex
+pthread_cond_t cond; //Variável condicional para o Mutex
+//////////////////////////////////////////////Funções//////////////////////////////////////////////////////
+/*Cria a lista de clientes que conectarão com o servidor*/
+bool cria_lista_clientes(Cliente *clientes){
 	(*clientes) = NULL;
+	return true;
 }
-
-void cria_lista_comandos(Comandos *comand){
+/*Cria a lista de comandos que será usada para*/
+bool cria_lista_comandos(Comandos *comand){
 	(*comand) = NULL;
+	return true;
 }
-
+/*Define os comandos, eles serão passados quando o help for acionado!*/
 bool inicializa_comandos(Comandos *c){
-	char *comando, *descricao;
-
 	/*Preenchendo a lista com os comandos e suas descrições.*/
-	while(i >= 0){
-		if (i == 3){
-			if (!((*c)=(Comandos)malloc(sizeof(comandos))))
-            	return false;
-			comando = "SEND";
-			descricao = "Envia <CLIENTS_NAME>: <MENSSAGEM> para todos os clientes conectados (menos ocliente emissor).";
-			strcpy((*c->comand), comando);
-			strcpy((*c->descricao), descricao);
-			(*c->dir) = NULL;
-			i--;
-			inicializa_comandos(&(*c)->dir);
-		}
-		if (i == 2){
-			if (!((*c)=(Comandos)malloc(sizeof(comandos))))
-            	return false;
-			comando = "SENDTO";
-			descricao = "Idêntico com SEND, ou seja, Envia <CLIENTS_NAME>: <MENSSAGEM>, porém envia a mensagem apenas para o cliente especificado pelo <CLIENT_NAME>.";
-			strcpy((*c->comand), comando);
-			strcpy((*c->descricao), descricao);
-			(*c->dir) = NULL;
-			i--;
-			inicializa_comandos(&(*c)->dir);
-		}
-		if (i == 1){
-			if (!((*c)=(Comandos)malloc(sizeof(comandos))))
-            	return false;
-			comando = "WHO";
-			descricao = "Retorna a lista dos clientes conectados ao servidor.";
-			strcpy((*c->comand), comando);
-			strcpy((*c->descricao), descricao);
-			(*c->dir) = NULL;
-			i--;
-			inicializa_comandos(&(*c)->dir);
-		}
-		if (i == 0){
-			if (!((*c)=(Comandos)malloc(sizeof(comandos))))
-            	return false;
-			comando = "HELP";
-			descricao = "Retorna a lista de comandos suportados e seu uso.";
-			strcpy((*c->comand), comando);
-			strcpy((*c->descricao), descricao);
-			(*c->dir) = NULL;
-			i--;
-		}
+
+	if (cm == 3){
+		if (!((*c)=(Comandos)malloc(sizeof(comandos))))
+           	return false;
+		strcpy((*c)->comando, "SEND");
+		strcpy((*c)->descricao, "Envia [CLIENTS_NAME]:[MENSSAGEM] para todos os clientes conectados (menos o cliente emissor). Uso: SEND:[MENSSAGEM]. OBS: Use os ':' Entre as intruções.");
+		((*c)->dir) = NULL;
+		cm = 2;
+		inicializa_comandos(&(*c)->dir);
+	}
+	if (cm == 2){
+		if (!((*c)=(Comandos)malloc(sizeof(comandos))))
+           	return false;
+		strcpy((*c)->comando, "SENDTO");
+		strcpy((*c)->descricao, "Idêntico com SEND, ou seja, Envia [CLIENTS_NAME]:[MENSSAGEM], porém envia a mensagem apenas para o cliente especificado pelo [CLIENT_NAME]. Uso: SENDTO:[CLIENT_NAME_DE_DESTINO]:[MENSSAGEM]. OBS: Use os ':' Entre as intruções.");
+		(*c)->dir = NULL;
+		cm = 1;
+		inicializa_comandos(&(*c)->dir);
+	}
+	if (cm == 1){
+		if (!((*c)=(Comandos)malloc(sizeof(comandos))))
+           	return false;
+		strcpy((*c)->comando, "WHO");
+		strcpy((*c)->descricao, "Retorna a lista dos clientes conectados ao servidor.");
+		(*c)->dir = NULL;
+		cm = 0;
+		inicializa_comandos(&(*c)->dir);
+	}
+	if (cm == 0){
+		if (!((*c)=(Comandos)malloc(sizeof(comandos))))
+           	return false;
+		strcpy((*c)->comando, "HELP");
+		strcpy((*c)->descricao, "Retorna a lista de comandos suportados e seu uso.");
+		(*c)->dir = NULL;
+		cm = -1;
 	}
 	return true;
 }
-/*compara as Strings retornando 0 s forem iguais.*/
-int comparar(char *s1, char *s2){
-    return (strcmp(s1,s2));
-}
-/*Lista de Clientes Conectados, quando o cliente sai ele tem o campo conexao setado como
-false, se conectado com true*/
-int lista_clientes(char nome, int socket, int porta, Cliente *clientes){
-	 if (!(*clientes)){
-        if (!((*clientes)=(Cliente)malloc(sizeof(No))))
-            return 0;
-		strcpy((*clientes)->nome, nome);
-		(*clientes)->conexao = true;
-		(*clientes)->porta = porta;
-		(*clientes)->socket = socket;
-        (*clientes)->dir = NULL;
-    }else{
-		/*Aqui temos um retorno de controle caso o usuário já exista e esteja conectado.*/
-        if (!(comparar((*clientes)->nome, nome))){
-			if((*clientes)->conexao)
-            	return 2;
-        }else if (!(comparar((*clientes)->nome, nome))){
-			if(!((*clientes)->conexao)){
-				strcpy((*clientes)->nome, nome);
-				(*clientes)->conexao = true;
-				(*clientes)->porta = porta;
-				(*clientes)->socket = socket;
-				return 1;
-			}
-        }else{
-			lista_clientes(nome, &(*clientes)->dir);
-		}
-    }
-    return 1;
-}
-/*Procura o cliente e devolve a estrutura que detem seus dados*/
-Cliente retorna_cliente(Cliente c, char *nome, int socket){
-	Cliente aux;
-
-	if(nome){
-		for(aux = c; (aux) && (comparar(aux->nome, nome)!=0); aux = aux->dir);
-	}else if (socket){
-		for(aux = c; (aux) && (aux->socket == socket); aux = aux->dir);
-	}
-	return (aux);
-}
 /*Função que Obtem a hora da biblioteca time*/
 int Obtem_hora(void){
-    time(&Segundos); //obtém a hora em segundos.
-    DataAtual = localtime(&Segundos); //converte horas em segundos.
-    return(DataAtual->tm_hour); //retorna as horas de 0 a 24.
+    time(&segundos); //obtém a hora em segundos.
+    tempo_atual = localtime(&segundos); //converte horas em segundos.
+    return(tempo_atual->tm_hour); //retorna as horas de 0 a 24.
 }
 /*Função que Obtem os minutos da biblioteca time*/
 int Obtem_minuto(void){
-    time(&Segundos); //obtém a hora em segundos.
-    DataAtual = localtime(&Segundos); //converte horas em segundos.
-    return(DataAtual->tm_min); //retorna os minutos de 0 a 59.
+    time(&segundos); //obtém a hora em segundos.
+    tempo_atual = localtime(&segundos); //converte horas em segundos.
+    return(tempo_atual->tm_min); //retorna os minutos de 0 a 59.
 }
 /*Função para Impressão da Hora no formato fornecido!*/
-char imprime_hora(void){
+void imprime_hora(char *tempo){
 	int hora, minuto;
 	char retorno[7];
 
 	hora = Obtem_hora();
 	minuto = Obtem_minuto();
 
-	//printf("<%d:%d\>t<Cliente>\t", hora, minuto);
-	if (hora <10)
-		snprintf(retorno, 7, "0%d:", hora);
-	else
-		snprintf(retorno, 7, "%d:", hora);
-	if (minuto < 10)
-		snprintf(retorno, 7, "0%d\t", minuto);
-	else
-		snprintf(retorno, 7, "%d\t", minuto);
-	return retorno;
-}
-/////////////////////////////////////////Funções para sockets//////////////////////////////////////////
-bool comando_send(Cliente clientes, Cliente emisor, char *msg){
-	char send_msg[max_text]; //Conteudo total a ser enviado!
-	Cliente aux; //Auxiliar para envio à todos os clientes!
-	char hora;
-	
-	hora = imprime_hora();//capturando hora;
-	/*Criando a msg com o nome e a msg a ser enviada!*/
-	snprintf(send_msg, max_text, "%s: %s", emisor->nome, msg);
-	/*Loop que envia a msg para todos os clientes.*/
-	for(aux = clientes; (aux); aux = aux->dir){
-		System("clear");
-		send(aux->socket, send_msg, strlen(send_msg), 0);
-		printf("%s\t%s\tSEND\tExecutado:Sim", hora, emisor->nome);
-		return true;
+	if(hora <10){
+		if(minuto < 10){
+			sprintf(retorno, "0%d:0%d", hora, minuto);
+		}else
+			sprintf(retorno, "0%d:%d", hora, minuto);	
+	}else{
+		if(minuto < 10){
+			sprintf(retorno, "%d:0%d", hora, minuto);
+		}else
+			sprintf(retorno, "%d:%d", hora, minuto);
 	}
-	printf("%s\t%s\tSENDTO\tExecutado:Nao", hora, emisor->nome);
-	return false;
+	strcpy(tempo, retorno);
 }
+/*O buffer vem no formato [Comando], ou [Comando:Mensagem], ou [Comando:Receptor:Mensagem],
+e é dividodo a depender do comando passado!*/
+bool separa_buffer(char comando[], char buffer[], char nome[], char msg[]){
+	int i = 0, sd = 0, sdt = 0;
+	char who[] = "WHO", help[] = "HELP", send[] = "SEND", sendto[] = "SENDTO";
 
-bool comando_send_to(Cliente receptor, Cliente emisor, char *msg){
-	char send_to_msg [max_text];
-	char hora;
-	
-	/*Criando a msg com o nome e a msg a ser enviada!*/
-	snprintf(send_to_msg, max_text, "%s: %s", emisor->nome, msg);
-	hora = imprime_hora();//capturando hora;
-	/*Enviando a msg para o usuário especificado!*/
-	if ((receptor)&&(receptor->conexao)){
-		System("clear");
-		send(receptor->socket, send_to_msg, strlen(send_to_msg), 0);
-		printf("%s\t%s\tSENDTO\tExecutado:Sim", hora, emisor->nome);
-		return true;
-	}
-	printf("%s\t%s\tSENDTO\tExecutado:Nao", hora, emisor->nome);
-	return false;
-}
-
-bool comando_who(int socket, Cliente emisor, Cliente clientes){
-	Cliente aux;
-	char msg[max_text];
-
-	snprintf(msg, sizeof(msg), "\n---------------------------Bits Mensseger WHO-------------------------------\n");
-	snprintf(msg, sizeof(msg), "Usuarios conectados: ");
-	for (aux = clientes; (aux); aux = aux->dir){
-		if(comparar(aux->nome, emisor->nome) != 0)
-			snprintf(msg, sizeof(msg), "%s, ", aux->nome);
-	}
-	snprintf(msg, sizeof(msg), "\n----------------------------------------------------------------------------\n");
-	recv(emisor->socket, msg, sizeof(msg), 0);
-	return true;
-}
-
-bool comando_help(Cliente emisor, Comandos comand){
-	Comandos aux;
-	char msg[max_text];
-
-	snprintf(msg, sizeof(msg), "---------------------------Bits Mensseger HELP-------------------------------\n");
-	for (aux = comand; (aux); aux = aux->dir){
-		snprintf(msg, sizeof(msg), "| %s -- %s |\n", aux->comand, aux->descricao);
-	}
-	snprintf(msg, sizeof(msg), "-----------------------------------------------------------------------------\n");
-	recv(emisor->socket, msg, sizeof(msg), 0);
-	return true;
-}
-/*O buffer vem no formato [Comando:Receptor:Mensagem], ou [Comando], ou [Comando:Mensagem], e é dividodo a depender do comando passado!*/
-char retorna_nome_msg(char *buffer, char *nome, char *msg){
-	char *comando;
-	int i;
-	
-	for(i = 0; i < 7; i++){
-		if (buffer[i] != ':'){
-			comando[i] = buffer[i];
-		}else if(buffer[i] == ':'){
+	if (buffer[i] == 'W'){
+		i++;
+		if(buffer[i] == 'H'){
 			i++;
-			break;
-		}
-	}
-	if (!(comparar("SENDTO", comando))){
-		for(; i < (strlen(buffer) - strlen(comando)); i++){
-			if (buffer[i] != ':'){
-				nome[i] = buffer[i];
-			}else if(buffer[i] == ':'){
+			if(buffer[i] == 'O'){
 				i++;
-				for(; i < (strlen(buffer) - (strlen(comando)+(strlen(nome)))); i++){
-					if (buffer[i] != '\0'){
-						msg[i] = buffer[i];
-					}else{
-						msg[i] = '\0';
-						return comando;
+				strcpy(comando, who);
+				return true;
+			}
+		}
+	}else if (buffer[i] == 'H'){  // pega buffer e compara caractere por caractere
+		i++;
+		if (buffer[i] == 'E'){
+			i++;
+			if(buffer[i] == 'L'){
+				i++;
+				if(buffer[i] == 'P'){
+					strcpy(comando, help);
+					return true;
+				}
+			}
+		}
+	}else if (buffer[i] == 'S'){
+		i++;
+		if (buffer[i] == 'E'){
+			i++;
+			if (buffer[i] == 'N'){
+				i++;
+				if (buffer[i] == 'D'){
+					i++;
+					if (buffer[i] == ':'){
+						strcpy(comando, send);
+						memset(msg, 0x0, max_text);  // zerando a menssagem
+						sd = 1;
+						i++;
+					}
+					if (buffer[i] == 'T'){
+						i++;
+						if(buffer[i] == 'O'){
+							i++;
+							strcpy(comando, sendto);
+							memset(nome, 0x0, nome_user);  // zerando a menssagem e o nome
+							memset(msg, 0x0, max_text);
+							i++;
+							sdt = 1;
+						}
 					}
 				}
 			}
 		}
-	}else if (!(comparar("SEND", comando))){
-		for(; i < (strlen(buffer) - strlen(comando)); i++){
-			if (buffer[i] != '\0'){
-				msg[i] = buffer[i];
-			}else{
-				msg[i] = '\0';
-				return comando;
+	}else{
+		for (i = 0; (i < strlen(buffer)) && (i < 7); i++){
+			if((buffer[i] != ':')&&(buffer[i] != '\0')&&(buffer[i] != '\n')){  // responsavel por tratar o erro de o usuario digitar valor nao especificado
+				comando[i] = buffer[i];
 			}
 		}
 	}
-	return comando;
-}
-/*função para Saldação do servidor!*/
-void bem_vindo(char *msg, int socket){
-	char *bem_vindo = "-----------------------------Bem Vindo ao Bits Mensseger---------------------------------";
-	send(socket, bem_vindo, strlen(bem_vindo), 0);
-	printf("%s", bem_vindo);
-}
-/*Função que fará a leitura da mensagem, e processará os próximos passos!*/
-char recebe_mensagem(int socket){
-	int t, comando;
-
-	memset(buffer, 0x0, max_text);
-	memset(nome, 0x0, max_text);
-	memset(msg, 0x0, max_text);
-	t = recv(socket, buffer, max_text, 0);
-
-	//if (t == 0){
-	//	remove_socket_lista(socket) ;
-	 //   return 1;
-	//}
-	comando = retorna_msg_nome(&buffer, &nome, &msg);
-	return comando;
-}
-////////////////////////////////////////////////Principal//////////////////////////////////////////////
-int main(int argc, char **argv){
-	Cliente clientes, c;
-	Cliente emisor;
-	Cliente receptor;
-	Comandos comandos;
-	char *comando;
-	char *bem_vindo = "-----------------------------Bem Vindo ao Bits Mensseger---------------------------------";
-	int t_socket, t;
-	int sizeof_listen;
-	int server_socket; /*Server descritor Socket*/
-
-	/*Variáveis para o socket*/
-	int porta, j;
-	struct sockaddr_in server;
-	struct timeval select_time;
-
-	/*Inicializando e criando listas a serem usadas.*/
-    if (!(cria_lista_clientes(&clientes))){
-		perror("Lista clientes erro!");
+	int j;
+	if(sdt){
+		for(j = 0; i < strlen(buffer); i++, j++){
+			if(buffer[i] != ':'){
+				nome[j] = buffer[i];
+			}else if(buffer[i] == ':'){
+				nome[j]='\0';
+				i++;
+				break;
+			}
+		}
+		for(j = 0; i < (strlen(buffer)); j++, i++){
+			if(buffer[i] != '\0'){
+				msg[j] = buffer[i];
+			}else{
+				msg[j] = '\0';
+				return true;
+			}
+		}	
+	}else if(sd){
+		for(j =0 ; i < (strlen(buffer)); j++, i++){
+			if(buffer[i] != '\0'){
+				msg[j] = buffer[i];
+			}else{
+				msg[j] = '\0';
+				return true;
+			}
+		}
 	}
-	if(!(cria_lista_comandos(&comandos))){
+	return false;
+}
+
+/*Função que pega a primeira msg recebida e coleta o nome do usuário.*/
+bool recebe_nome(int socket, char *nome){
+	int t;
+	
+	memset(nome, 0x0, nome_user); /*limpando o buffer para capturar a nova msg!*/
+	t = recv(socket, nome, nome_user, 0);/*Recebendo o nome*/
+	if (t <= 0) /*Verificando se o socket é valido, se o retorno for 0 é porque o cliente saiu*/
+		return false;
+	return true;
+}
+/*Procura o cliente e devolve a estrutura que detem seus dados*/
+Cliente retorna_cliente(Cliente lista_clientes, char *nome, int socket){
+	Cliente aux = lista_clientes;
+
+	if((nome)||(socket)){ /*Procurando por nome ou socket*/
+		for(; (aux) && ((strcmp(aux->nome, nome)!=0) || (aux->socket == socket)); aux = aux->dir);
+		return (aux);
+	}
+	return NULL;
+}
+/*Lista de Clientes Conectados, quando o cliente sai ele tem o campo conexao setado como false, se
+conectado com true*/
+bool cadastra_clientes(int socket, char nome[], Cliente *clientes){
+	if(!(*clientes)){
+        if(!((*clientes)=(Cliente)malloc(sizeof(No)))) //Alocação (negacao )
+            return false;
+		strcpy((*clientes)->nome, nome);//Usando o retorno da função de cadastro para captura do nome.
+		(*clientes)->socket = socket; //Cada cliente tem um valor diferente de socket
+        (*clientes)->dir = NULL;
+    }else{
+		/*Aqui temos um retorno de controle caso o usuário já exista e esteja conectado.*/
+        if(retorna_cliente((*clientes), nome, socket)){
+            return false;
+        }else{
+			//chama recursivamente a função até que ache o espaço vazio para inserir o novo usuário.
+			cadastra_clientes(socket, nome, &(*clientes)->dir);
+		}
+    }
+    return true;
+}
+/*remove o cliente da lista s ele estiverdeconectado*/
+void remove_cliente(Cliente desconectado, Cliente *clientes){
+	Cliente lista, aux;
+
+	for(lista = (*clientes), aux = NULL; (lista) && (strcmp(lista->nome, desconectado->nome) != 0) ; aux = lista, lista = lista->dir);
+	if(lista){
+		if(aux){
+			aux->dir = lista->dir;
+			close((lista)->socket);
+			free(lista);
+		}else{
+			if(lista->dir){
+				aux = lista->dir;
+				close((lista)->socket);
+				free(lista);
+			}
+		}
+		if((aux == NULL)&&(lista->dir == NULL)){
+			close((lista)->socket);
+			free(lista);
+			(*clientes) = NULL;
+		}
+		conectados--;	
+	}
+}
+//////////////////////////////////////////COMANDOS DO CHAT/////////////////////////////////////////////
+/*Função que recebe a mensagem e envia para todos os clientes cadastrados, e que não sairam ainda.*/
+bool comando_send(Cliente emisor, Cliente lista_clientes, char msg[]){
+	char send_msg[max_text]; //Conteudo total a ser enviado!
+	Cliente aux; //Auxiliar para envio à todos os clientes!
+	bool erro = true;
+
+	/*Criando a msg com o nome e a msg a ser enviada!*/
+	snprintf(send_msg, max_text, "%s diz: %s", emisor->nome, msg);
+	/*Loop que envia a msg para todos os clientes.*/
+	for(aux = lista_clientes; (aux) ; aux = aux->dir){
+		if((aux->socket != emisor->socket)){
+			send(aux->socket, send_msg, strlen(send_msg), 0);
+			erro = false;
+		}
+	}
+	if(erro){
+		return false;
+	}
+	return true;
+}
+/*Função que recebe a mensagem e o nome de um cliente e envia a mensagem para o cliente pedido.*/
+bool comando_send_to(Cliente receptor, Cliente emisor, char msg[]){
+	char send_to_msg[max_text];
+
+	/*Criando a msg com o nome e a msg a ser enviada!*/
+	snprintf(send_to_msg, max_text, "%s diz: %s", emisor->nome, msg);
+	/*Enviando a msg para o usuário especificado!*/
+	if (receptor){
+		if(strcmp(receptor->nome, emisor->nome) != 0){
+			send(receptor->socket, send_to_msg, strlen(send_to_msg), 0);
+			return true;
+		}
+	}
+	return false;
+}
+/*Função que envia a lista de usuários conectados*/
+bool comando_who(Cliente emisor, Cliente lista_clientes){
+	Cliente aux;
+	char msg_who[max_text];
+
+	snprintf(msg_who, max_text, "\n-----------------------------Bits Mensseger WHO---------------------------------\n");
+	send(emisor->socket, msg_who, strlen(msg_who), 0);
+	memset(msg_who, 0x0, max_text);
+	snprintf(msg_who, max_text, "Usuários conectados: ");
+	send(emisor->socket, msg_who, strlen(msg_who), 0);
+	for (aux = lista_clientes; (aux); aux = aux->dir){
+		memset(msg_who, 0x0, max_text);
+		snprintf(msg_who, max_text, " %s", aux->nome);
+		send(emisor->socket, msg_who, strlen(msg_who), 0);
+	}
+	memset(msg_who, 0x0, max_text);
+	snprintf(msg_who, max_text, "\n--------------------------------------------------------------------------------\n");
+	send(emisor->socket, msg_who, strlen(msg_who), 0);
+	return true;
+}
+/*Função que envia, a lista de comando para o usuário*/
+bool comando_help(Cliente emisor, Comandos comand){
+	Comandos aux;
+	char msg_help[max_text];
+
+	snprintf(msg_help, max_text, "------------------------------Bits Mensseger HELP-------------------------------\n\n\n");
+	send(emisor->socket, msg_help, strlen(msg_help), 0);
+	for (aux = comand; (aux); aux = aux->dir){
+		memset(msg_help, 0x0, max_text);
+		snprintf(msg_help, max_text, "%s - %s\n\n", aux->comando, aux->descricao);
+		send(emisor->socket, msg_help, strlen(msg_help), 0);
+	}
+	memset(msg_help, 0x0, max_text);
+	snprintf(msg_help, max_text, "--------------------------------------------------------------------------------\n");
+	send(emisor->socket, msg_help, strlen(msg_help), 0);
+	return true;
+}
+/*Envia mensagem de desconhecimento do comando*/
+void comando_erro(Cliente emisor, char comando[]){
+	char erro[max_text];
+
+	snprintf(erro, max_text, "%s, comando não encontrado - Pro favor use o comando [HELP] para ver a lista de comandos existentes!\n", comando);
+	send(emisor->socket, erro, strlen(erro), 0);
+}
+/*Envia a MSG informando que o usuário desconctou*/
+void usuario_desconectado(Cliente emissor, Cliente clientes){
+	Cliente aux;
+	char msg_desconect[max_text], horas[8];
+
+	snprintf(msg_desconect, max_text, "%s desconectou!\n", (emissor)->nome);
+	for(aux = clientes; (aux) ; aux = aux->dir){
+		if((aux->socket != emissor->socket)){
+			send(aux->socket, msg_desconect, strlen(msg_desconect), 0);
+		}
+	}
+	imprime_hora(horas);
+	printf("%s\t%s", horas, (emissor)->nome);
+    printf("\tDesconectado\n");
+}
+///////////////////////////////////////////////////////////////Threads///////////////////////////////////////////////////////////////
+/*função para threads, neste caso para o cadastro do cliente*/
+void *nova_conexao(void){
+	//int socket;
+	char nome[nome_user], horas[8], msg[max_text], pipe[nome_user];
+	Cliente clientes_conexao = passagem;
+	struct sockaddr_in client;
+
+	/*Loop que ira cuidar do cadastro do Usuários, ele aceita a conexão, e cadastra o usuário na lista*/
+	while(true){
+		novo_cliente = accept(clientes, (struct sockaddr *)&client, (socklen_t*)&c);
+		if(recebe_nome(novo_cliente, nome)){
+			//printf("Cadastro - Nome recebido\n");
+			if(conectados < (max_users + 1)){
+				if(cadastra_clientes(novo_cliente, nome, &clientes_conexao)){
+					cadastro = true;
+					conectados++;
+					memset(msg, 0x0, max_text);
+					strcpy(msg, "===========================Bem Vindo ao BITS MESSENGER==========================\n");
+					send(novo_cliente, msg, strlen(msg), 0);
+				}else{
+					cadastro = false;
+				}
+			}else{
+				memset(msg, 0x0, max_text);
+				strcpy(msg, "Nao foi possivel estabelecer a conexao, servidor lotado!\n");
+				send(novo_cliente, msg, strlen(msg), 0);
+				close(novo_cliente);
+			}
+		}else{
+			cadastro = false;
+		}
+		if(cadastro){
+			imprime_hora(horas);//capturando hora;
+			printf("%s\t%s\tConectado\n", horas, nome);
+			//limpa o buffer
+			pthread_mutex_lock(&mutex);
+			memset(pipe, 0x0, max_text);
+			//junta em buffer o que será passado
+			sprintf(pipe, "%d", novo_cliente);
+			/* Escrevendo a string no pipe */
+    	    write(fd[1], &pipe, strlen(pipe));
+			write(fd[1], &pipe, strlen(pipe));
+			passagem = clientes_conexao;
+			pthread_mutex_unlock(&mutex);
+		}else{
+			memset(msg, 0x0, max_text);
+			strcpy(msg, "Nao foi possivel estabelecer a conexao, Usuario existente ou impossivel Cadastrar!\n");
+			send(novo_cliente, msg, strlen(msg), 0);
+
+			close(novo_cliente);
+		}
+		/*Verifica se o accept() falhou, se sim ele termina o servidor*/
+		if(novo_cliente < 0){
+			perror("accept falhou!");
+			close(clientes);
+			exit(8);
+		}
+	}
+}
+/*Função que atenderá os pedidos dos comando e decidirá qual será a função chamada*/
+void *decide_acao(void){
+	char mensagem[max_text], nome[nome_user], horas[8], comando[6], pipe[nome_user];
+	char who[] = "WHO", help[] = "HELP", send[] = "SEND", sendto[] = "SENDTO";
+	Cliente clientes_acao, aux, aux2, emissor, receptor, a;
+	Comandos comandos;
+	ssize_t nbytes, npipe;
+	int i, j;
+
+    if(!(cria_lista_comandos(&comandos))){
 		perror("Lista Comandos erro!");
 	}
+
 	if(!(inicializa_comandos(&comandos))){
 		perror("Lista Comandos erro!");
 	}
-
-    if ( argc == 1 ) {
-        bem_vindo(argv[0]);
-        return -1 ;
-    }
-	//Capturando a porta passada na inicialização, e número máximo de usuáarios
-    if ( argc > 2 ) {
-        users = atoi(argv[2]) ;
-    }
-
-    porta = atoi(argv[1]) ;
-	//definindo socket de escuta
-    socket_listen = socket(AF_INET, SOCK_STREAM, 0) ;
-
-    if (socket_listen < 0){
-        perror("socket");
-        return -1;
-    }
-	//Preenchendo a estrutura do socket
-    server.sin_family = AF_INET;
-    server.sin_port = htons(porta);
-    server.sin_addr.s_addr = INADDR_ANY;
-
-    t = sizeof(struct sockaddr_in);
-    if (bind(socket_listen, (struct sockaddr *) &server, t) < 0){
-        perror("bind");
-        return -1;
-    }
-
-    if (listen(socket_listen, 5) < 0){
-        perror("listen");
-        return -1;
-    }
-
-  	//usaremos Cntrl+C para sair, mas o certo será "quit"
-    while (1){
-        //pegar todos os usuarios e colocar na estrutura
-        FD_ZERO(&select_set);
-        FD_SET(socket_listen, &select_set);
-		//vai setar o descritor para cada nova conexão.
-        for (t = 0, c = clientes; (c) && t < max_users; t++, c = c->dir){
-            if (c->socket != -1){
-                FD_SET(c->socket, &select_set);
-            }
+    //Aqui tem que percorrer os usuários usando o select e atender aqueles que precisarem ser atendidos
+    FD_ZERO(&select_acao);
+    FD_ZERO(&select_aux);
+    FD_SET(fd[0], &select_acao);
+    clientes_acao = passagem;
+    while(1){
+    	FD_ZERO(&select_aux);
+		select_aux = select_acao;
+    	for(aux = clientes_acao; (aux); aux = aux->dir){
+    	    if(aux->socket){
+    	        FD_SET(aux->socket, &select_aux);
+        	}
         }
-		//aqui vai printar na tela do servidor dizendo que está aguradando usuarios
-        //printf("[+] Servidor aguardando usuarios %d [%d/%d] ...\n", port, list_tam, users) ;
-		//atualiza a cada 5 segundos
-        select_time.tv_sec = 5 ;
-        select_time.tv_usec = 0 ;
-		//Definindo o select
-        if((t=select(FD_SETSIZE, &select_set, NULL, NULL, &select_time)) < 0){
-            perror("select");
-            return -1;
-        }
-
-        if(t > 0){
-           //Aceitar a conexão de entrada e adicionar  novo socket na lista.
-            if (FD_ISSET(socket_listen, &select_set)){
-                int n;
-
-                if ((n=accept(socket_listen, NULL, NULL)) < 0){
-                    perror("accept");
-                }else if(inserir_socket(n) == 1){ /* server is busy */
-                    send(n,SERVER_OCUPADO,strlen(SERVER_OCUPADO),0);
-                    close(n);
-                }
-                continue ;
-            } else {
-                int i ;
-
-               //processa os dados recebidos
-                for (i =0, c = clientes; (c) && (i < users); i++, c = c->dir) {
-                    if ( FD_ISSET(c->socket, &select_set) ) {
-                        if (comando = receber_msg(lista_de_clientes[i].sockfd) == 0 ) {
-                            int flag_system_msg = 0 ;
-
-                            if(lista_de_clientes[i].nick_ok == 0) { //para setar o apelido
-                                  lista_de_clientes[i].nick_ok = 1 ;
-                                  strncpy(lista_de_clientes[i].nick, msg, nome_user) ;
-
-
-                                  if(lista_de_clientes[i].nick[strlen(lista_de_clientes[i].nick)-1]=='\n') {
-                                        lista_de_clientes[i].nick[strlen(lista_de_clientes[i].nick)-1]=0 ;
-                                  }
-
-                                  snprintf(msg, max_text, "%s : entrou na conversa!\n", lista_de_clientes[i].nick) ;
-
-                                  flag_system_msg = 1 ;
-                            }
-                           envia_mensagem_all(lista_de_clientes[i].sockfd, flag_system_msg) ;
-                        }
-                    }
-                }
-            }
-        }
+    	if((select(FD_SETSIZE, &select_aux, NULL, NULL, NULL)) < 0){
+           	perror("select");
+           	exit(10);
+       	}
+    	if(FD_ISSET(fd[0], &select_aux)){
+			//usar u mutex para para a thread e liberar a outra.
+			memset(pipe, 0x0, max_text);
+			npipe = read (fd [0], &pipe, sizeof (pipe));
+			if((strlen(pipe)) > 1){
+				pthread_mutex_lock(&mutex);
+				clientes_acao = passagem;
+				pthread_mutex_unlock(&mutex);
+			}
+    	} 
+		for(emissor = clientes_acao, aux2 = NULL, i = 0; (emissor) && (i < conectados); aux2 = emissor, emissor = emissor->dir, i++){
+			if(FD_ISSET(emissor->socket, &select_aux)){
+    			memset(buffer, 0x0, max_text);
+        		nbytes = recv(emissor->socket, buffer, sizeof(buffer), 0);
+        		/*Verifica erro ou usuário desconectado*/
+        		if (nbytes == 0){
+        			//conexão finalizada, remoção do usuário necessária.
+        			FD_CLR(emissor->socket, &select_aux);
+        			usuario_desconectado(emissor, clientes_acao);
+        			a = emissor;
+        			remove_cliente(a, &clientes_acao);
+        			if(aux2){
+						emissor = aux2;
+					}else{
+						emissor = clientes_acao;
+					}
+					if(!(clientes_acao)){
+						break;
+					}
+        			//Se ele não saiu tem que ver o que ele quer.
+        		}else{
+     				separa_buffer(comando, buffer, nome, mensagem);
+        			if(strcmp(comando, help) == 0){
+   						if(comando_help(emissor, comandos)){
+    						imprime_hora(horas);
+    						printf("%s\t%s\t", horas, emissor->nome);
+    						printf("HELP\tExecutado:Sim\n");
+    					}else{
+    						imprime_hora(horas);
+    						printf("%s\t%s", horas, emissor->nome);
+    						printf("\tHELP\tExecutado:Nao\n");
+    					}
+   					}
+   					if(strcmp(comando, who) == 0){
+    					if(comando_who(emissor, clientes_acao)){
+    						imprime_hora(horas);
+    						printf("%s\t%s", horas, emissor->nome);
+    						printf("\tWHO\tExecutado:Sim\n");
+    					}else{
+    						imprime_hora(horas);
+    						printf("%s\t%s", horas, emissor->nome);
+    						printf("\tWHO\tExecutado:Nao\n");
+    					}
+    				}
+    				if(strcmp(comando, send) == 0){
+    					if(comando_send(emissor, clientes_acao, mensagem)){
+    						imprime_hora(horas);
+    						printf("%s\t%s", horas, emissor->nome);
+    						printf("\tSEND\tExecutado:Sim\n");
+    					}else{
+    						imprime_hora(horas);
+    						printf("%s\t%s", horas, emissor->nome);
+    						printf("\tSEND\tExecutado:Nao\n");
+    					}
+    				}
+    				if(strcmp(comando, sendto) == 0){
+    					receptor = retorna_cliente(clientes_acao, nome, 0);
+    					if(comando_send_to(receptor, emissor, mensagem)){
+    		 				imprime_hora(horas);
+    						printf("%s\t%s", horas, emissor->nome);
+    						printf("\tSENDTO\tExecutado:Sim\n");
+    					}else{
+    						imprime_hora(horas);
+    						printf("%s\t%s", horas, emissor->nome);
+    						printf("\tSENDTO\tExecutado:Nao\n");
+    					}
+    				}
+    				if ((strcmp(comando, sendto) != 0)&&(strcmp(comando, send) != 0)&&(strcmp(comando, who) != 0)&&strcmp(comando, help) != 0){
+    					comando_erro(emissor, comando);
+    				}
+        		}
+        	}
+       	}
     }
+}
+/*Função que desconecta todos os usuários antes de saír.*/
+void desconect_all(void){
+	Cliente aux = NULL;
+	char msg_desc[] = "Servidor desconectado!\n";
+	
+	while(passagem){
+		aux = passagem;
+		send(aux->socket, msg_desc, strlen(msg_desc), 0);
+		passagem = passagem->dir;
+		close((aux)->socket);
+		free(aux);
+		aux = NULL;
+	}
+	close(clientes);
+}
+/*Função que destruirá as threads e o mutex antes de finalizar.*/ 
+void destroi_mutex(void){
+	pthread_mutex_destroy(&mutex);
+	pthread_cond_destroy(&cond);
+}
+/*Função para o Sinal Ctrl+C que deverar desconectar todos os usuários e desconectar o Servidor.*/
+void termina_servidor(int sig){
+	desconect_all();
+	destroi_mutex();
+	printf("\n-----------------------SERVIDOR BITS MESSENGER FINALIZADO-----------------------\n");
+	exit(sig);	
+}
+/////////////////////////////////////////////////////////////Principal////////////////////////////////////////////////////////////
+int main (int argc, char *argv[]){
+	struct sockaddr_in servidor;
+	int porta;
+	
+	if(argc != 2){
+		system("clear");
+		printf("Modo de uso: ./server_chat [PORTA]\n\n");
+		exit(1);
+	}
+	porta = atoi(argv[1]);
+	bzero((void *) &servidor, sizeof(servidor));
+	//Tipo de conexão
+	servidor.sin_family = AF_INET;
+	//Usar IP local
+	servidor.sin_addr.s_addr = htons(INADDR_ANY);
+	//Usa PORTA passada
+	servidor.sin_port = htons(porta);
+	/*Criando o socket do servidor*/
+	if ((clientes = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+		perror("Socket");
+		exit(2);
+	}
+	int sim = 1;
+	/*impede falha que retorna o erro: "Endereço já em uso", está parte do código permite
+	reutilizar uma porta que ta bloqueada por um processo que a estar monopolizando.*/
+	if (setsockopt(clientes,SOL_SOCKET,SO_REUSEADDR,&sim,sizeof(int)) == -1) {
+    	perror("setsockopt");
+    	close(clientes);
+    	exit(3);
+	}
+	/**/
+	if(bind(clientes, (struct sockaddr *)&servidor, sizeof(servidor)) < 0){
+		perror("bind");
+		close(clientes);
+		exit(4);
+	}
+	system("clear");
+	listen(clientes, max_users);
+	tamanho = clientes;
+	
+	/* Criando nosso Pipe */
+    if(pipe(fd) < 0){
+        perror("pipe");
+        exit(5);
+    }
+    //Redefini o Sinal Ctrl-C
+	signal(SIGINT, termina_servidor);
+   	// Cria o mutex
+    pthread_mutex_init(&mutex, NULL);
+    // Cria a variavel de condicao
+    pthread_cond_init(&cond, NULL);
+	printf("========================Servidor BITS MESSENGER iniciado!=======================\n");
 
-    return 0;
+	/*aqui chama a função que cadastra o cliente*/
+	if(pthread_create(&thread_cadastro, NULL, (void*)&nova_conexao, NULL) < 0){
+		termina_servidor(SIGINT);
+		perror("Impossivel criar o Thread!");
+		//aqui tem q fechar todos os clientes que estiverem abertos e depois sair.
+		exit(7);
+	}
+	if(pthread_create(&thread_comando, NULL, (void*)&decide_acao, NULL) < 0){
+		termina_servidor(SIGINT);
+		perror("Impossivel criar Thread!");
+		//aqui tem q fechar todos os clientes que estiverem abertos e depois sair.
+		exit(10);
+	}
+	/*Loop infivnito para o servidor ficar sempre em execução*/
+	int s, estado;
+	s = pthread_join(thread_cadastro, (void **) &estado);
+	s = pthread_join(thread_comando, (void **) &estado);
+	close(clientes);
+	return 0;
 }
