@@ -14,7 +14,7 @@ Para executar este programa faça o seguinte:
 
 2) Quando estiver no diŕetório digite o comando: make 
 
-3) Agora basta iniciar o servidor para isto faça: ./server_chat [POSRTA]
+3) Agora basta iniciar o servidor para isto faça: ./server_chat [PORTA]
 
 4) Em seguida basta iniciar o cliente, para isto faça: ./client_server [CLIENTE_NAME] [IP_SERVIDOR] [PORTA_SERVIDOR]
 
