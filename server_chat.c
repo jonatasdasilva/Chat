@@ -137,65 +137,19 @@ bool separa_buffer(char comando[], char buffer[], char nome[], char msg[]){
 	int i = 0, sd = 0, sdt = 0;
 	char who[] = "WHO", help[] = "HELP", send[] = "SEND", sendto[] = "SENDTO";
 
-	if (buffer[i] == 'W'){
-		i++;
-		if(buffer[i] == 'H'){
-			i++;
-			if(buffer[i] == 'O'){
-				i++;
-				strcpy(comando, who);
-				return true;
-			}
-		}
-	}else if (buffer[i] == 'H'){  // pega buffer e compara caractere por caractere
-		i++;
-		if (buffer[i] == 'E'){
-			i++;
-			if(buffer[i] == 'L'){
-				i++;
-				if(buffer[i] == 'P'){
-					strcpy(comando, help);
-					return true;
-				}
-			}
-		}
-	}else if (buffer[i] == 'S'){
-		i++;
-		if (buffer[i] == 'E'){
-			i++;
-			if (buffer[i] == 'N'){
-				i++;
-				if (buffer[i] == 'D'){
-					i++;
-					if (buffer[i] == ':'){
-						strcpy(comando, send);
-						memset(msg, 0x0, max_text);  // zerando a menssagem
-						sd = 1;
-						i++;
-					}
-					if (buffer[i] == 'T'){
-						i++;
-						if(buffer[i] == 'O'){
-							i++;
-							strcpy(comando, sendto);
-							memset(nome, 0x0, nome_user);  // zerando a menssagem e o nome
-							memset(msg, 0x0, max_text);
-							i++;
-							sdt = 1;
-						}
-					}
-				}
-			}
-		}
-	}else{
-		for (i = 0; (i < strlen(buffer)) && (i < 7); i++){
-			if((buffer[i] != ':')&&(buffer[i] != '\0')&&(buffer[i] != '\n')){  // responsavel por tratar o erro de o usuario digitar valor nao especificado
-				comando[i] = buffer[i];
-			}
+	for (i = 0; (i < strlen(buffer)) && (i < 7); i++){
+		if((buffer[i] != ':')&&(buffer[i] != '\0')&&(buffer[i] != '\n')){  // responsavel por tratar o erro de o usuario digitar valor nao especificado
+			comando[i] = buffer[i];
 		}
 	}
+	comando[i] = '\0';
+	i++;
 	int j;
-	if(sdt){
+	if(!(strcmp(comando, who)))
+		return true;
+	if(!(strcmp(comando, help)))
+		return true;
+	if(!(strcmp(comando, sendto))){
 		for(j = 0; i < strlen(buffer); i++, j++){
 			if(buffer[i] != ':'){
 				nome[j] = buffer[i];
@@ -213,7 +167,7 @@ bool separa_buffer(char comando[], char buffer[], char nome[], char msg[]){
 				return true;
 			}
 		}	
-	}else if(sd){
+	}else if(!(strcmp(comando, send))){
 		for(j =0 ; i < (strlen(buffer)); j++, i++){
 			if(buffer[i] != '\0'){
 				msg[j] = buffer[i];
