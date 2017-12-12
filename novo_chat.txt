@@ -1,0 +1,4 @@
+Links encontrados: https://github.com/crespum/Twisted-AMP-bidirectional
+                   https://stackoverflow.com/questions/13270871/twisted-python-server-and-java-chat
+                   https://github.com/glyph/amp-java
+                   http://twistedmatrix.com/documents/16.4.0/core/howto/servers.html
